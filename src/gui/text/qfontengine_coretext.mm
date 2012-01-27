@@ -60,7 +60,10 @@ static void loadAdvancesForGlyphs(CTFontRef ctfont,
 {
     Q_UNUSED(flags);
     QVarLengthArray<CGSize> advances(len);
-    CTFontGetAdvancesForGlyphs(ctfont, kCTFontHorizontalOrientation, cgGlyphs.data(), advances.data(), len);
+    bool vertical = (flags & QTextEngine::TopToBottom);
+    CTFontOrientation orientation = vertical ? kCTFontVerticalOrientation
+                                             : kCTFontHorizontalOrientation;
+    CTFontGetAdvancesForGlyphs(ctfont, orientation, cgGlyphs.data(), advances.data(), len);
 
     for (int i = 0; i < len; ++i) {
         if (glyphs->glyphs[i] & 0xff000000)
@@ -76,6 +79,14 @@ static void loadAdvancesForGlyphs(CTFontRef ctfont,
         }
     }
 }
+
+static inline void swapCGSize(CGSize& size)
+{
+    CGFloat height = size.width;
+    size.width = size.height;
+    size.height = height;
+}
+
 
 QCoreTextFontEngineMulti::QCoreTextFontEngineMulti(const QCFString &name, const QFontDef &fontDef, bool kerning)
     : QFontEngineMulti(0)
@@ -173,6 +184,10 @@ bool QCoreTextFontEngineMulti::stringToCMap(const QChar *str, int len, QGlyphLay
     QCFType<CFStringRef> cfstring = CFStringCreateWithCharactersNoCopy(0,
                                                                reinterpret_cast<const UniChar *>(str),
                                                                len, kCFAllocatorNull);
+    bool vertical = (flags & QTextEngine::TopToBottom);
+    CTFontOrientation orientation = vertical ? kCTFontVerticalOrientation : kCTFontHorizontalOrientation;
+    if (vertical)
+        CFDictionaryAddValue(attributeDict, kCTVerticalFormsAttributeName, kCFBooleanTrue);
     QCFType<CFAttributedStringRef> attributedString = CFAttributedStringCreate(0, cfstring, attributeDict);
     QCFType<CTTypesetterRef> typeSetter;
 
@@ -190,6 +205,8 @@ bool QCoreTextFontEngineMulti::stringToCMap(const QChar *str, int len, QGlyphLay
 #endif
         typeSetter = CTTypesetterCreateWithAttributedString(attributedString);
 
+    if (vertical)
+        CFDictionaryRemoveValue(attributeDict, kCTVerticalFormsAttributeName);
     CFRange range = {0, 0};
     QCFType<CTLineRef> line = CTTypesetterCreateLine(typeSetter, range);
     CFArrayRef array = CTLineGetGlyphRuns(line);
@@ -324,6 +341,10 @@ bool QCoreTextFontEngineMulti::stringToCMap(const QChar *str, int len, QGlyphLay
                 CGSize advance = CGSizeMake(tmpPoints[i + 1].x - tmpPoints[i].x, tmpPoints[i].y - tmpPoints[i + 1].y);
                 if (transformAdvances)
                     advance = CGSizeApplyAffineTransform(advance, textMatrix);
+                if (vertical) {
+                    advance.width = -advance.width;
+                    swapCGSize(advance);
+                }
 
                 outAdvances_x[idx] = QFixed::fromReal(advance.width);
                 // Use negative y advance for flipped coordinate system
@@ -335,13 +356,22 @@ bool QCoreTextFontEngineMulti::stringToCMap(const QChar *str, int len, QGlyphLay
                 }
             }
             CGSize lastGlyphAdvance;
-            CTFontGetAdvancesForGlyphs(runFont, kCTFontHorizontalOrientation, tmpGlyphs + glyphCount - 1, &lastGlyphAdvance, 1);
-
+            CTFontGetAdvancesForGlyphs(runFont, orientation,
+                                       tmpGlyphs + glyphCount - 1, &lastGlyphAdvance, 1);
             outGlyphs[rtl ? 0 : (glyphCount - 1)] = tmpGlyphs[glyphCount - 1] | fontIndex;
+            // advances returned from CTFontGetAdvancesForGlyphs() put y-axis advances in
+            // lastGlyphAdvance.width even if we specified kCTFontVerticalOrientation, so
+            // we need to swap the width and height here.
+            if (vertical)
+                swapCGSize(lastGlyphAdvance);
             outAdvances_x[rtl ? 0 : (glyphCount - 1)] =
                     (fontDef.styleStrategy & QFont::ForceIntegerMetrics)
                     ? QFixed::fromReal(lastGlyphAdvance.width).round()
                     : QFixed::fromReal(lastGlyphAdvance.width);
+            outAdvances_y[rtl ? 0 : (glyphCount - 1)] =
+                    (fontDef.styleStrategy & QFont::ForceIntegerMetrics)
+                    ? QFixed::fromReal(lastGlyphAdvance.height).round()
+                    : QFixed::fromReal(lastGlyphAdvance.height);
 
             if (endWithPDF) {
                 logClusters[stringRange.location + stringRange.length - 1] = glyphCount + prepend;
@@ -367,7 +397,9 @@ bool QCoreTextFontEngineMulti::stringToCMap(const QChar *str, int len, QGlyphLay
 {
     *nglyphs = len;
     QCFType<CFStringRef> cfstring;
-
+    bool vertical = (flags & QTextEngine::TopToBottom);
+    CTFontOrientation orientation = vertical ? kCTFontVerticalOrientation
+                                             : kCTFontHorizontalOrientation;
     QVarLengthArray<CGGlyph> cgGlyphs(len);
     CTFontGetGlyphsForCharacters(ctfont, (const UniChar*)str, cgGlyphs.data(), len);
 
@@ -385,7 +417,7 @@ bool QCoreTextFontEngineMulti::stringToCMap(const QChar *str, int len, QGlyphLay
                 glyphs->glyphs[i] = substituteGlyph | fontIndex;
                 if (!(flags & QTextEngine::GlyphIndicesOnly)) {
                     CGSize advance;
-                    CTFontGetAdvancesForGlyphs(substituteFont, kCTFontHorizontalOrientation, &substituteGlyph, &advance, 1);
+                    CTFontGetAdvancesForGlyphs(substituteFont, orientation, &substituteGlyph, &advance, 1);
                     glyphs->advances_x[i] = QFixed::fromReal(advance.width);
                     glyphs->advances_y[i] = QFixed::fromReal(advance.height);
                 }
@@ -532,11 +564,33 @@ glyph_metrics_t QCoreTextFontEngine::boundingBox(const QGlyphLayout &glyphs)
     return glyph_metrics_t(0, -(ascent()), w - lastRightBearing(glyphs, round), ascent()+descent(), w, 0);
 }
 
+glyph_metrics_t QCoreTextFontEngine::boundingBox(const QGlyphLayout &glyphs, Qt::Orientation orientation)
+{
+    if (orientation == Qt::Horizontal)
+        return boundingBox(glyphs);
+
+    CGRect rect = CTFontGetBoundingRectsForGlyphs(ctfont,
+                                                  kCTFontVerticalOrientation,
+                                                  (const CGGlyph *) glyphs.glyphs,
+                                                  NULL, glyphs.numGlyphs);
+    return glyph_metrics_t(QFixed::fromReal(rect.origin.x),
+                           QFixed::fromReal(rect.origin.y),
+                           QFixed::fromReal(rect.size.width),
+                           QFixed::fromReal(rect.size.height), 0, 0);
+}
+
 glyph_metrics_t QCoreTextFontEngine::boundingBox(glyph_t glyph)
+{
+    return boundingBox(glyph, Qt::Horizontal);
+}
+
+glyph_metrics_t QCoreTextFontEngine::boundingBox(glyph_t glyph, Qt::Orientation orientation)
 {
     glyph_metrics_t ret;
     CGGlyph g = glyph;
-    CGRect rect = CTFontGetBoundingRectsForGlyphs(ctfont, kCTFontHorizontalOrientation, &g, 0, 1);
+    CTFontOrientation ctOrientation = orientation == Qt::Vertical ? kCTFontVerticalOrientation
+                                                                  : kCTFontHorizontalOrientation;
+    CGRect rect = CTFontGetBoundingRectsForGlyphs(ctfont, ctOrientation, &g, 0, 1);
     if (synthesisFlags & QFontEngine::SynthesizedItalic) {
         rect.size.width += rect.size.height * SYNTHETIC_ITALIC_SKEW;
     }
@@ -545,7 +599,9 @@ glyph_metrics_t QCoreTextFontEngine::boundingBox(glyph_t glyph)
     ret.x = QFixed::fromReal(rect.origin.x);
     ret.y = -QFixed::fromReal(rect.origin.y) - ret.height;
     CGSize advances[1];
-    CTFontGetAdvancesForGlyphs(ctfont, kCTFontHorizontalOrientation, &g, advances, 1);
+    CTFontGetAdvancesForGlyphs(ctfont, ctOrientation, &g, advances, 1);
+    if (orientation == Qt::Vertical)
+        swapCGSize(advances[0]);
     ret.xoff = QFixed::fromReal(advances[0].width);
     ret.yoff = QFixed::fromReal(advances[0].height);
 

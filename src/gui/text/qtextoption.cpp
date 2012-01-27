@@ -60,6 +60,7 @@ QTextOption::QTextOption()
     : align(Qt::AlignLeft),
       wordWrap(QTextOption::WordWrap),
       design(false),
+      orientation(0),
       unused(0),
       f(0),
       tab(-1),
@@ -77,6 +78,7 @@ QTextOption::QTextOption(Qt::Alignment alignment)
     : align(alignment),
       wordWrap(QTextOption::WordWrap),
       design(false),
+      orientation(0),
       unused(0),
       f(0),
       tab(-1),
@@ -103,6 +105,7 @@ QTextOption::QTextOption(const QTextOption &o)
       wordWrap(o.wordWrap),
       design(o.design),
       direction(o.direction),
+      orientation(o.orientation),
       unused(o.unused),
       f(o.f),
       tab(o.tab),
@@ -133,6 +136,7 @@ QTextOption &QTextOption::operator=(const QTextOption &o)
     wordWrap = o.wordWrap;
     design = o.design;
     direction = o.direction;
+    orientation = o.orientation;
     unused = o.unused;
     f = o.f;
     tab = o.tab;

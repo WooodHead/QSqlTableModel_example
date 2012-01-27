@@ -6669,10 +6669,12 @@ void QPainter::drawTextItem(const QPointF &p, const QTextItem &_ti)
 
             QTextItemInt ti2 = ti.midItem(multi->engine(which), start, end - start);
             ti2.width = 0;
+            ti2.height = 0;
             // set the high byte to zero and calc the width
             for (i = start; i < end; ++i) {
                 glyphs.glyphs[i] = glyphs.glyphs[i] & 0xffffff;
                 ti2.width += ti.glyphs.effectiveAdvance(i);
+                ti2.height += ti.glyphs.effectiveVerticalAdvance(i);
             }
 
             if (rtl)
@@ -6689,6 +6691,9 @@ void QPainter::drawTextItem(const QPointF &p, const QTextItem &_ti)
                 glyphs.glyphs[i] = hi | glyphs.glyphs[i];
             }
 
+            x += ti2.width.toReal();
+            y += ti2.height.toReal();
+
             // change engine
             start = end;
             which = e;
@@ -6696,10 +6701,12 @@ void QPainter::drawTextItem(const QPointF &p, const QTextItem &_ti)
 
         QTextItemInt ti2 = ti.midItem(multi->engine(which), start, end - start);
         ti2.width = 0;
+        ti2.height = 0;
         // set the high byte to zero and calc the width
         for (i = start; i < end; ++i) {
             glyphs.glyphs[i] = glyphs.glyphs[i] & 0xffffff;
             ti2.width += ti.glyphs.effectiveAdvance(i);
+            ti2.height += ti.glyphs.effectiveVerticalAdvance(i);
         }
 
         if (rtl)
